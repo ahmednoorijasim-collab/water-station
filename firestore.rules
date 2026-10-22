@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signed() { return request.auth != null; }
+    function isAdmin() { return signed() && request.auth.token.email == 'admin@waterapp.local'; }
+    function hasProfile() { return signed() && exists(/databases/$(db)/documents/users/$(request.auth.uid)); }
+    function me() { return get(/databases/$(db)/documents/users/$(request.auth.uid)).data; }
+    function isCustomer() { return hasProfile() && me().role == 'customer'; }
+    function isDriver() { return hasProfile() && me().role == 'driver'; }
+    function changes() { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+    // Station settings: price, tank size, location check
+    match /settings/{id} {
+      allow read: if signed();
+      allow write: if isAdmin();
+    }
+
+    // Profiles: who is a customer (tank) or a driver (car)
+    match /users/{uid} {
+      allow read: if isAdmin() || (signed() && request.auth.uid == uid);
+      // A customer activates their own account: tank number + the phone number on file must match
+      allow create: if isAdmin() || (
+        signed() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['role', 'tankId', 'phone'])
+        && request.resource.data.role == 'customer'
+        && request.auth.token.email == 't' + request.resource.data.tankId + '@waterapp.local'
+        && exists(/databases/$(db)/documents/tanks/$(request.resource.data.tankId))
+        && get(/databases/$(db)/documents/tanks/$(request.resource.data.tankId)).data.phone == request.resource.data.phone
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    // Tanks (subscribers)
+    match /tanks/{id} {
+      allow read: if isAdmin() || (isCustomer() && me().tankId == id);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (isCustomer() && me().tankId == id
+            && changes().hasOnly(['uid'])
+            && resource.data.get('uid', null) == null
+            && request.resource.data.uid == request.auth.uid)
+        || (isDriver() && changes().hasOnly(['lat', 'lng', 'lastFillAt']));
+    }
+
+    // Refill orders
+    match /orders/{id} {
+      allow read: if isAdmin()
+        || (signed() && resource.data.uid == request.auth.uid)
+        || (isDriver() && resource.data.carNo == me().carNo);
+      allow create: if isAdmin() || (
+        isCustomer()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.tankId == me().tankId
+        && request.resource.data.status == 'new'
+        && request.resource.data.carNo == null
+      );
+      allow update: if isAdmin() || (
+        isDriver()
+        && resource.data.carNo == me().carNo
+        && resource.data.status == 'assigned'
+        && changes().hasOnly(['status', 'doneAt', 'doneDay', 'paid', 'lat', 'lng'])
+        && request.resource.data.status in ['assigned', 'done']
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Cars: capacity and live location
+    match /cars/{n} {
+      allow read: if isAdmin() || (isDriver() && string(me().carNo) == n);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isDriver() && string(me().carNo) == n
+        && changes().hasOnly(['lat', 'lng', 'acc', 'seenAt', 'onDuty'])
+      );
+    }
+
+    // Reminders from the station to a tank owner
+    match /notices/{id} {
+      allow read: if isAdmin() || (isCustomer() && resource.data.tankId == me().tankId);
+      allow write: if isAdmin();
+    }
+  }
+}

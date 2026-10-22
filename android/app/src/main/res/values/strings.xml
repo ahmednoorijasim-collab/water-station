@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">محطة الماء المركزية</string>
+    <string name="title_activity_main">محطة الماء المركزية</string>
+    <string name="package_name">com.ahmednoori.centralwater</string>
+    <string name="custom_url_scheme">com.ahmednoori.centralwater</string>
+</resources>

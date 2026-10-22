@@ -1,0 +1,51 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install and sync web files
+        run: |
+          npm ci
+          npx esbuild src/main.js --bundle --minify --format=iife --target=es2019 --outfile=www/app.js
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../central-water.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: central-water-apk
+          path: central-water.apk
+
+      - name: Publish download on the Releases page
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: محطة الماء المركزية (آخر نسخة)
+          body: نزّل ملف central-water.apk وافتحه على موبايلك حتى تنصّب التطبيق.
+          files: central-water.apk
+          make_latest: true
