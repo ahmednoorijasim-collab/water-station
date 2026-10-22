@@ -614,8 +614,9 @@ function renderDriver() {
     const head = i % per === 0 ? `${i > 0 ? '<div class="back">ارجع للمحطة وعبّي الحوضية قبل الطلعة الجاية</div>' : ''}<div class="trip">الطلعة ${trip} · ${inTrip} خزانات · ${fmt(inTrip * (num(S.settings.tankSize) || 500))} لتر</div>` : '';
     const has = o.lat != null;
     return head + `<div class="card stop">
-      <div class="row"><span class="row gap"><span class="seq">${i + 1}</span><b class="big2">خزان ${esc(o.tankId)}</b></span><span class="muted">${esc(o.area)}</span></div>
-      <div class="strong">${esc(o.name)}</div>
+      <div class="row"><span class="row gap"><span class="seq">${i + 1}</span><b class="big2">خزان ${esc(o.tankId)}</b></span></div>
+      <div class="addr"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg><span>${esc(o.area || 'بدون حي')}</span></div>
+      <div class="owner">${esc(o.name)}</div>
       ${o.note ? `<div class="drvnote"><b>ملاحظة المشترك</b><span>${esc(o.note)}</span></div>` : ''}
       ${o.phone ? `<a class="callbtn" href="tel:0${esc(o.phone)}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>اتصال بالمشترك <span dir="ltr">0${esc(o.phone)}</span></a>` : '<div class="muted small">ماكو رقم موبايل مسجّل لهذا المشترك.</div>'}
       ${has ? `<a class="navbtn" target="_blank" rel="noopener" href="${mapsTo(o.lat, o.lng)}">اذهب للخزان (GPS)</a>`
