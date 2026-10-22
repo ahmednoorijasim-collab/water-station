@@ -31,10 +31,22 @@ jobs:
 
       - name: Build APK
         working-directory: android
+        env:
+          SIGN_KEYSTORE_B64: ${{ secrets.SIGN_KEYSTORE_B64 }}
+          SIGN_PASSWORD: ${{ secrets.SIGN_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-          cp app/build/outputs/apk/debug/app-debug.apk ../central-water.apk
+          if [ -n "$SIGN_KEYSTORE_B64" ] && [ -n "$SIGN_PASSWORD" ]; then
+            echo "$SIGN_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/station.jks"
+            export SIGN_KEYSTORE_PATH="$RUNNER_TEMP/station.jks"
+            export SIGN_STORE_PASSWORD="$SIGN_PASSWORD" SIGN_KEY_PASSWORD="$SIGN_PASSWORD" SIGN_KEY_ALIAS=centralwater
+            ./gradlew assembleRelease --no-daemon
+            cp app/build/outputs/apk/release/app-release.apk ../central-water.apk
+          else
+            echo "::warning::Signing secrets are missing, building a temporary debug APK"
+            ./gradlew assembleDebug --no-daemon
+            cp app/build/outputs/apk/debug/app-debug.apk ../central-water.apk
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
