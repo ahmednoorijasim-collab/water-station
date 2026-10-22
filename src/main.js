@@ -206,13 +206,14 @@ function renderCustomer() {
   $('#cAction').innerHTML = open ? `
     <section class="card">
       <h2>حالة طلبك</h2>
+      ${open.note ? `<div class="note">ملاحظتك: ${esc(open.note)}</div>` : ''}
       <div class="steps">
         <div>${dot(true)}<span>وصل طلبك للمحطة · ${ago(open.createdAt)}</span></div>
         <div>${dot(open.status === 'assigned')}<span>${open.status === 'assigned' ? 'سيارة رقم ' + esc(open.carNo) + ' بالطريق إليك' : 'بانتظار تخصيص سيارة'}</span></div>
         <div>${dot(false)}<span>تمت التعبئة</span></div>
       </div>
     </section>` : `
-    <button type="button" class="request" data-act="request" ${t ? '' : 'disabled'}>
+    <button type="button" class="request" data-act="openReq" ${t ? '' : 'disabled'}>
       <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.7c3.5 4.2 6 7.6 6 11a6 6 0 0 1-12 0c0-3.4 2.5-6.8 6-11z"/><path d="M9 14h6"/><path d="M12 11v6"/></svg>
       طلب إعادة تعبئة<small>يوصل طلبك للمحطة مباشرة</small>
     </button>`;
@@ -223,16 +224,38 @@ function renderCustomer() {
   $('#cNotes').innerHTML = S.notices.map(n => `
     <div class="notice"><b>${esc(n.title)}</b><span>${esc(n.body)}</span></div>`).join('');
 }
+const QUICK = ['الصبح', 'الظهر', 'العصر', 'أي وقت', 'اتصل قبل ما توصل'];
+function openRequestSheet() {
+  const box = document.createElement('div'); box.className = 'sheetwrap'; box.id = 'reqSheet';
+  box.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="reqT">
+      <h2 id="reqT">طلب إعادة تعبئة</h2>
+      <p class="hint">إذا عندك ملاحظة للسائق اختارها أو اكتبها. هذا اختياري.</p>
+      <div class="chips">${QUICK.map(q => `<button type="button" class="chip" data-act="qchip" aria-pressed="false">${q}</button>`).join('')}</div>
+      <label for="reqNote" class="small strong">ملاحظة (اختياري)</label>
+      <textarea id="reqNote" maxlength="150" rows="2" placeholder="مثلاً: الخزان على السطح، الباب الخلفي…"></textarea>
+      <button type="button" class="primary" data-act="request">أرسل الطلب</button>
+      <button type="button" class="link" data-act="closeReq">إلغاء</button>
+    </div>`;
+  document.body.appendChild(box);
+}
+function closeRequestSheet() { const s = $('#reqSheet'); if (s) s.remove(); }
+function sheetNote() {
+  const tags = [...document.querySelectorAll('#reqSheet .chip[aria-pressed="true"]')].map(b => b.textContent);
+  const txt = ($('#reqNote') && $('#reqNote').value || '').trim();
+  return [...tags, txt].filter(Boolean).join(' · ').slice(0, 200);
+}
 async function customerRequest(btn) {
   const t = S.tank; if (!t) return;
+  const note = sheetNote();
   if (S.myOrders.some(o => o.status !== 'done')) return toast('عندك طلب مفتوح.');
   btn.disabled = true;
   try {
     await F.addDoc(F.collection(db, 'orders'), {
       uid: S.user.uid, tankId: t.id, name: t.name || '', area: t.area || '', phone: t.phone || '',
-      lat: t.lat ?? null, lng: t.lng ?? null, lastFillAt: t.lastFillAt || null,
+      lat: t.lat ?? null, lng: t.lng ?? null, lastFillAt: t.lastFillAt || null, note,
       status: 'new', carNo: null, createdAt: F.serverTimestamp(), by: 'customer'
     });
+    closeRequestSheet();
     toast('وصل طلبك للمحطة. راح تتحدث الحالة هنا لمن تتحرك السيارة.');
   } catch (e) { toast(errText(e), true); btn.disabled = false; }
 }
@@ -276,7 +299,9 @@ function drawAdminTab() {
     <section class="card form">
       <h2>طلب بالتلفون</h2>
       <p class="hint">للمشتركين اللي يتصلون بالمحطة بدل التطبيق.</p>
-      <div class="inline"><input id="phTank" inputmode="numeric" placeholder="رقم الخزان" aria-label="رقم الخزان"><button type="button" class="primary" data-act="phoneOrder">إنشاء طلب</button></div>
+      <input id="phTank" inputmode="numeric" placeholder="رقم الخزان" aria-label="رقم الخزان">
+      <input id="phNote" maxlength="150" placeholder="ملاحظة للسائق (اختياري)" aria-label="ملاحظة للسائق">
+      <button type="button" class="primary" data-act="phoneOrder">إنشاء طلب</button>
     </section>
     <section><div class="row"><h2>قرب موعد التعبئة الشهري</h2><button class="link" type="button" data-act="reloadDue">تحديث</button></div><div id="dueList" class="list"></div></section>
     <div id="assignBar" class="assignbar" hidden></div>`;
@@ -350,11 +375,12 @@ function renderAdminOrders() {
     <button type="button" class="ocard ${S.sel.has(o.id) ? 'sel' : ''}" data-act="toggle" data-id="${o.id}" aria-pressed="${S.sel.has(o.id)}">
       <span class="box">${S.sel.has(o.id) ? '✓' : ''}</span>
       <span class="ob"><span class="row"><b>خزان ${esc(o.tankId)} · ${esc(o.name)}</b>${(o.days ?? 0) >= 30 ? '<span class="pill amber">تجاوز الشهر</span>' : ''}</span>
-      <span class="muted small">${esc(o.area)} · ${ago(o.createdAt)}${o.days != null ? ' · آخر تعبئة قبل ' + o.days + ' يوم' : ''}${o.by === 'admin' ? ' · بالتلفون' : ''}</span></span>
+      <span class="muted small">${esc(o.area)} · ${ago(o.createdAt)}${o.days != null ? ' · آخر تعبئة قبل ' + o.days + ' يوم' : ''}${o.by === 'admin' ? ' · بالتلفون' : ''}</span>
+      ${o.note ? `<span class="note small">${esc(o.note)}</span>` : ''}</span>
     </button>`).join('') : '<p class="muted card">ماكو طلبات جديدة.</p>';
   const asg = S.open.filter(o => o.status === 'assigned').sort((a, b) => a.carNo - b.carNo);
   $('#asgList').innerHTML = asg.length ? asg.map(o => `
-    <div class="lrow"><span>خزان ${esc(o.tankId)} · ${esc(o.area)}</span><span class="row gap"><b class="blue">سيارة ${esc(o.carNo)}</b><button type="button" class="link small" data-act="unassign" data-id="${o.id}">إرجاع</button></span></div>`).join('')
+    <div class="lrow"><span>خزان ${esc(o.tankId)} · ${esc(o.area)}${o.note ? `<br><span class="muted small">${esc(o.note)}</span>` : ''}</span><span class="row gap"><b class="blue">سيارة ${esc(o.carNo)}</b><button type="button" class="link small" data-act="unassign" data-id="${o.id}">إرجاع</button></span></div>`).join('')
     : '<p class="muted">ماكو طلبات بالطريق.</p>';
   $('#dueList').innerHTML = due.length ? due.map(t => `
     <div class="duecard">
@@ -382,7 +408,7 @@ async function assignTo(n) {
     toast(ids.length + ' طلب انخصص لسيارة ' + n + '. صار عندها ' + total + ' خزان = ' + (trips === 1 ? 'طلعة وحدة' : trips + ' طلعات') + '.');
   } catch (e) { toast(errText(e), true); }
 }
-async function orderForTank(id, by) {
+async function orderForTank(id, by, note = '') {
   id = tankId(id); if (!id) return toast('اكتب رقم الخزان.', true);
   if (S.open.some(o => o.tankId === id)) return toast('هذا الخزان عنده طلب مفتوح.', true);
   try {
@@ -391,7 +417,7 @@ async function orderForTank(id, by) {
     const t = s.data();
     await F.addDoc(F.collection(db, 'orders'), {
       uid: t.uid || null, tankId: id, name: t.name || '', area: t.area || '', phone: t.phone || '',
-      lat: t.lat ?? null, lng: t.lng ?? null, lastFillAt: t.lastFillAt || null,
+      lat: t.lat ?? null, lng: t.lng ?? null, lastFillAt: t.lastFillAt || null, note: String(note || '').trim().slice(0, 200),
       status: 'new', carNo: null, createdAt: F.serverTimestamp(), by
     });
     toast('انسوى طلب لخزان ' + id + '.');
@@ -590,7 +616,8 @@ function renderDriver() {
     return head + `<div class="card stop">
       <div class="row"><span class="row gap"><span class="seq">${i + 1}</span><b class="big2">خزان ${esc(o.tankId)}</b></span><span class="muted">${esc(o.area)}</span></div>
       <div class="strong">${esc(o.name)}</div>
-      ${o.phone ? `<div class="muted small">موبايل: <span dir="ltr">0${esc(o.phone)}</span></div>` : ''}
+      ${o.note ? `<div class="drvnote"><b>ملاحظة المشترك</b><span>${esc(o.note)}</span></div>` : ''}
+      ${o.phone ? `<a class="callbtn" href="tel:0${esc(o.phone)}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>اتصال بالمشترك <span dir="ltr">0${esc(o.phone)}</span></a>` : '<div class="muted small">ماكو رقم موبايل مسجّل لهذا المشترك.</div>'}
       ${has ? `<a class="navbtn" target="_blank" rel="noopener" href="${mapsTo(o.lat, o.lng)}">اذهب للخزان (GPS)</a>`
             : `<div class="warn">أول زيارة: موقع الخزان مو محفوظ. لمن توصل، احفظه.</div><button type="button" class="dashed" data-act="saveLoc" data-id="${o.id}">حفظ موقع الخزان هنا</button>`}
       ${S.settings.geo && has ? '<div class="muted small">زر التعبئة يشتغل لمن تكون قرب الخزان (أقل من 100 متر).</div>' : ''}
@@ -664,6 +691,9 @@ document.addEventListener('click', async e => {
   const a = b.dataset.act, id = b.dataset.id;
   if (a === 'lmode') { loginMode = b.dataset.k; renderLogin(); }
   else if (a === 'logout') { if (S.role === 'driver' && S.watchId != null) await stopDuty(); await F.signOut(auth); }
+  else if (a === 'openReq') openRequestSheet();
+  else if (a === 'closeReq') closeRequestSheet();
+  else if (a === 'qchip') { const on = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', on); b.classList.toggle('on', on); }
   else if (a === 'request') customerRequest(b);
   else if (a === 'atab') { S.aTab = b.dataset.k; if (S.map) { S.map.remove(); S.map = null; } drawAdminTab(); }
   else if (a === 'toggle') { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); renderAdmin(); }
@@ -674,7 +704,7 @@ document.addEventListener('click', async e => {
   }
   else if (a === 'assign') assignTo(Number(b.dataset.n));
   else if (a === 'unassign') { try { await F.updateDoc(F.doc(db, 'orders', id), { status: 'new', carNo: null }); toast('رجع الطلب للطلبات الجديدة.'); } catch (x) { toast(errText(x), true); } }
-  else if (a === 'phoneOrder') { await orderForTank($('#phTank').value, 'admin'); $('#phTank').value = ''; }
+  else if (a === 'phoneOrder') { await orderForTank($('#phTank').value, 'admin', $('#phNote').value); $('#phTank').value = ''; $('#phNote').value = ''; }
   else if (a === 'orderFor') orderForTank(id, 'admin');
   else if (a === 'remind') remind(id);
   else if (a === 'reloadDue') loadDue();
