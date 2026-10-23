@@ -73,12 +73,22 @@ function watchSettings(after) {
   listen(F.doc(db, 'settings', 'main'), s => { S.settings = { price: 0, tankSize: 500, geo: true, ...(s.exists() ? s.data() : {}) }; after && after(); });
 }
 const perTrip = car => Math.max(1, Math.floor(num(car && car.cap || 3500) / (num(S.settings.tankSize) || 500)));
+const tankL = () => num(S.settings.tankSize) || 500;
+// water level of a car: null when never filled in the app
+const waterOf = c => (c && c.water != null ? Math.max(0, num(c.water)) : null);
+const waterState = c => { const w = waterOf(c); if (w == null) return 'unknown'; if (w < tankL()) return 'empty'; if (w <= 2 * tankL()) return 'low'; return 'ok'; };
+function gauge(c, big) {
+  const cap = num(c && c.cap) || 3500, w = waterOf(c), st = waterState(c);
+  const pct = w == null ? 0 : Math.min(100, Math.round(w / cap * 100));
+  const label = w == null ? 'غير معروف' : fmt(w) + ' لتر';
+  return `<div class="gauge ${st}${big ? ' big' : ''}"><div class="gtrack"><i style="width:${pct}%"></i></div><span>${label}${w != null ? ' من ' + fmt(cap) : ''}</span></div>`;
+}
 const priceTxt = () => num(S.settings.price) > 0 ? fmt(S.settings.price) + ' د.ع' : 'لم يُحدد بعد';
 
 // ------------------------------------------------------------------ boot
 F.onAuthStateChanged(auth, async u => {
   stopAll(); S.user = u; S.role = null; S.profile = null;
-  Object.assign(S, { aTab: 'orders', open: [], doneToday: [], cars: [], due: [], sel: new Set(), tank: null, myOrders: [], notices: [], car: null, route: [], myDone: [], _seenOnce: false, _dSeen: false });
+  Object.assign(S, { aTab: 'orders', open: [], doneToday: [], cars: [], due: [], sel: new Set(), tank: null, myOrders: [], notices: [], car: null, route: [], myDone: [], _seenOnce: false, _dSeen: false, _carsSeen: false });
   if (!u) return renderLogin();
   app().innerHTML = '<div class="center"><div class="spin"></div></div>';
   try {
@@ -276,7 +286,13 @@ function startAdmin() {
     renderAdmin();
   });
   listen(F.query(F.collection(db, 'orders'), F.where('doneDay', '==', dayKey())), qs => { S.doneToday = qs.docs.map(d => ({ id: d.id, ...d.data() })); renderAdmin(); });
-  listen(F.collection(db, 'cars'), qs => { S.cars = qs.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.n - b.n); renderAdmin(); });
+  listen(F.collection(db, 'cars'), qs => {
+    const wasDry = new Set(S.cars.filter(c => waterState(c) === 'empty').map(c => c.n));
+    S.cars = qs.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.n - b.n);
+    const nowDry = S.cars.filter(c => waterState(c) === 'empty' && !wasDry.has(c.n));
+    if (S._carsSeen && nowDry.length) { beep(); toast(nowDry.map(c => 'سيارة ' + c.n).join('، ') + ' بحاجة إلى إعادة تعبئة.', true); }
+    S._carsSeen = true; renderAdmin();
+  });
   loadDue();
   drawAdminTab();
 }
@@ -292,6 +308,7 @@ function drawAdminTab() {
   const k = S.aTab;
   let body = '';
   if (k === 'orders') body = `
+    <div id="dryBanner"></div>
     <div class="kpis" id="kpis"></div>
     <section><div class="row"><h2>طلبات جديدة</h2><span class="muted small">حسب الأولوية</span></div>
       <div id="picks" class="chips"></div><div id="newList" class="list"></div></section>
@@ -360,6 +377,8 @@ function renderAdmin() {
 function carLoad(n) { return S.open.filter(o => o.status === 'assigned' && o.carNo === n).length; }
 function renderAdminOrders() {
   if (!$('#newList')) return;
+  const dry = S.cars.filter(c => waterState(c) === 'empty');
+  $('#dryBanner').innerHTML = dry.length ? `<div class="wmsg red">${dry.map(c => 'سيارة ' + c.n).join('، ')} بحاجة إلى إعادة تعبئة (متبقي أقل من ${fmt(tankL())} لتر).</div>` : '';
   const openTanks = new Set(S.open.map(o => o.tankId));
   const due = S.due.filter(t => !openTanks.has(t.id));
   $('#kpis').innerHTML = [
@@ -394,7 +413,7 @@ function renderAdminOrders() {
   if (S.sel.size) {
     bar.hidden = false;
     bar.innerHTML = `<b>خصّص ${S.sel.size} طلب لسيارة رقم:</b><span class="muted small">تحت كل رقم: المخصص / سعة الطلعة</span>
-      <div class="chips">${S.cars.length ? S.cars.map(c => `<button type="button" class="carbtn" data-act="assign" data-n="${c.n}">${c.n}<small>${carLoad(c.n)}/${perTrip(c)}</small></button>`).join('') : '<span class="muted">ضيف السيارات من تبويب السيارات.</span>'}</div>`;
+      <div class="chips">${S.cars.length ? S.cars.map(c => `<button type="button" class="carbtn ${waterState(c) === 'empty' ? 'dry' : ''}" data-act="assign" data-n="${c.n}">${c.n}<small>${carLoad(c.n)}/${perTrip(c)}</small></button>`).join('') : '<span class="muted">ضيف السيارات من تبويب السيارات.</span>'}</div>`;
   } else bar.hidden = true;
   function nOf(s) { return S.open.filter(o => o.status === s).length; }
 }
@@ -454,6 +473,7 @@ function renderCars() {
     return `<div class="carrow">
       <div class="cinfo"><b>سيارة ${c.n}</b>
         <span class="muted small">${busy.has(c.n) ? 'بطلب · ' + carLoad(c.n) + ' خزان' : 'متاحة'} · ${live ? '<span class="green">بالدوام</span>' : 'خارج الدوام'}${seen ? ' · آخر موقع ' + ago(c.seenAt) : ''}</span>
+        ${gauge(c)}${waterState(c) === 'empty' ? '<span class="pill red">بحاجة إلى إعادة تعبئة</span>' : ''}
         <span class="muted small">تعبئات اليوم: ${S.doneToday.filter(o => o.carNo === c.n).length} · الكاش: ${fmt(cash(c.n))} د.ع · ${perTrip(c)} خزانات بالطلعة</span></div>
       <div class="capbox"><label for="cap${c.n}" class="small muted">الحمولة (لتر)</label>
         <div class="inline"><input id="cap${c.n}" inputmode="numeric" value="${esc(c.cap)}"><button type="button" class="outline small" data-act="saveCap" data-n="${c.n}">حفظ</button></div></div>
@@ -462,7 +482,7 @@ function renderCars() {
   if (S.map) {
     for (const c of S.cars) {
       if (c.lat == null) continue;
-      const icon = L.divIcon({ className: 'pin ' + (busy.has(c.n) ? 'busy' : 'free'), html: String(c.n), iconSize: [30, 30] });
+      const icon = L.divIcon({ className: 'pin ' + (waterState(c) === 'empty' ? 'empty' : busy.has(c.n) ? 'busy' : 'free'), html: String(c.n), iconSize: [30, 30] });
       if (S.markers[c.n]) S.markers[c.n].setLatLng([c.lat, c.lng]).setIcon(icon);
       else S.markers[c.n] = L.marker([c.lat, c.lng], { icon }).addTo(S.map).bindTooltip('سيارة ' + c.n);
     }
@@ -583,6 +603,7 @@ function startDriver() {
   const n = S.profile.carNo;
   shell('محطة الماء المركزية', 'سيارة رقم ' + n, `
     <section class="card duty" id="duty"></section>
+    <section class="card water" id="water"></section>
     <div class="row"><h2>مسار اليوم <span id="rCount" class="muted"></span></h2><span class="muted small">مرتب حسب الحي</span></div>
     <div id="routeAll"></div>
     <div id="route" class="list"></div>
@@ -603,6 +624,7 @@ function renderDriver() {
   const on = S.watchId != null;
   $('#duty').innerHTML = `<div class="row"><div><b>${on ? 'بالدوام' : 'خارج الدوام'}</b><span class="muted small">${on ? 'موقع السيارة يوصل للمحطة' : 'ابدأ الدوام حتى المحطة تشوف موقعك'}</span></div>
     <button type="button" class="${on ? 'outline' : 'primary'}" data-act="duty">${on ? 'إنهاء الدوام' : 'بدأت الدوام'}</button></div>`;
+  renderWater();
   const rank = a => String(a || '');
   const list = [...S.route].sort((a, b) => rank(a.area).localeCompare(rank(b.area)) || String(a.tankId).localeCompare(String(b.tankId)));
   const per = perTrip(S.car);
@@ -627,6 +649,24 @@ function renderDriver() {
   }).join('') : '<p class="muted card">ماكو طلبات لهذي السيارة هسه. لمن الإدارة تخصصلك طلب يوصلك تنبيه.</p>';
   $('#dToday').textContent = S.myDone.length;
   $('#dCash').textContent = fmt(S.myDone.reduce((s, o) => s + num(o.paid), 0)) + ' د.ع';
+}
+function renderWater() {
+  const el = $('#water'); if (!el) return;
+  const c = S.car || {}, w = waterOf(c), st = waterState(c);
+  const msg = st === 'empty' ? '<div class="wmsg red">السيارة بحاجة إلى إعادة تعبئة. ارجع للمحطة وعبّي الحوضية.</div>'
+    : st === 'low' ? `<div class="wmsg amber">متبقي لديك ${fmt(w)} لتر، يكفي ${Math.floor(w / tankL())} خزان فقط.</div>`
+    : st === 'unknown' ? '<div class="wmsg">لمن تعبّي الحوضية بالمحطة، اضغط الزر حتى يبدأ العدّاد.</div>' : '';
+  el.innerHTML = `<div class="row"><b>ماء الحوضية</b><span class="muted small">يكفي ${w == null ? '—' : Math.floor(w / tankL())} خزان</span></div>
+    ${gauge(c, true)}${msg}
+    <button type="button" class="${st === 'empty' || st === 'unknown' ? 'primary' : 'outline'}" data-act="refill">عبّيت الحوضية بالمحطة (${fmt(num(c.cap) || 3500)} لتر)</button>`;
+}
+async function refillCar(btn) {
+  btn.disabled = true;
+  try {
+    await F.updateDoc(F.doc(db, 'cars', String(S.profile.carNo)), { water: num(S.car && S.car.cap) || 3500, waterAt: F.serverTimestamp() });
+    S._waterWarn = null;
+    toast('تعبّت الحوضية. العدّاد رجع ' + fmt(num(S.car && S.car.cap) || 3500) + ' لتر.');
+  } catch (e) { toast(errText(e) + ' (حدّث قواعد Firestore)', true); btn.disabled = false; }
 }
 function getPos() {
   return new Promise((res, rej) => {
@@ -681,6 +721,13 @@ async function finish(id, btn) {
     b.update(F.doc(db, 'tanks', o.tankId), { lastFillAt: F.serverTimestamp() });
     await b.commit();
     toast('تمت تعبئة خزان ' + o.tankId + '.');
+    const w = waterOf(S.car);
+    if (w != null) {
+      const left = Math.max(0, w - tankL());
+      F.updateDoc(F.doc(db, 'cars', String(S.profile.carNo)), { water: left, waterAt: F.serverTimestamp() }).catch(e => console.warn(e));
+      if (left < tankL()) { beep(); setTimeout(() => toast('السيارة بحاجة إلى إعادة تعبئة. متبقي ' + fmt(left) + ' لتر.', true), 1600); }
+      else if (left <= 2 * tankL()) setTimeout(() => toast('متبقي لديك ' + fmt(left) + ' لتر.'), 1600);
+    }
   } catch (e) { toast(errText(e), true); btn.disabled = false; }
 }
 
@@ -716,6 +763,7 @@ document.addEventListener('click', async e => {
   else if (a === 'makeLoginGo') makeCustomerLoginGo(id);
   else if (a === 'addTank') addTank();
   else if (a === 'saveSettings') saveSettings();
+  else if (a === 'refill') refillCar(b);
   else if (a === 'duty') { S.watchId != null ? stopDuty() : startDuty(); }
   else if (a === 'saveLoc') saveLoc(id, b);
   else if (a === 'finish') finish(id, b);

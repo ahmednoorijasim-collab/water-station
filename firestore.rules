@@ -71,7 +71,7 @@ service cloud.firestore {
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || (
         isDriver() && string(me().carNo) == n
-        && changes().hasOnly(['lat', 'lng', 'acc', 'seenAt', 'onDuty'])
+        && changes().hasOnly(['lat', 'lng', 'acc', 'seenAt', 'onDuty', 'water', 'waterAt'])
       );
     }
 
