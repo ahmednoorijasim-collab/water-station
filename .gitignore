@@ -1,3 +1,4 @@
 node_modules/
 test/www/
+test/main.test.js
 .DS_Store
