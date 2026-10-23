@@ -114,16 +114,17 @@ function shell(title, sub, body, tabs) {
 }
 
 // ------------------------------------------------------------------ login
-let loginMode = 'customer';
+let loginMode = 'pick';
 function renderLogin(msg) {
   const m = loginMode;
-  const tab = (k, t) => `<button type="button" class="seg ${m === k || (k === 'customer' && m === 'activate') ? 'on' : ''}" data-act="lmode" data-k="${k}">${t}</button>`;
+  const back = '<button class="link" type="button" data-act="lmode" data-k="pick">رجوع</button>';
+  const titles = { customer: 'دخول المشترك', activate: 'تفعيل حساب المشترك', driver: 'دخول السائق', admin: 'دخول الإدارة' };
   let form = '';
   if (m === 'customer') form = `
       <label for="lTank">رقم الخزان</label><input id="lTank" inputmode="numeric" autocomplete="username">
       <label for="lPin">الرمز السري</label><input id="lPin" type="password" inputmode="numeric" autocomplete="current-password">
       <button class="primary" type="submit">دخول</button>
-      <button class="link" type="button" data-act="lmode" data-k="activate">أول مرة؟ فعّل حسابك</button>`;
+      <button class="link" type="button" data-act="lmode" data-k="activate">أول مرة؟ فعّل حسابك</button>${back}`;
   if (m === 'activate') form = `
       <p class="hint">اكتب رقم خزانك ورقم الموبايل المسجّل بالمحطة، واختار رمز سري من 6 أرقام.</p>
       <label for="aTank">رقم الخزان</label><input id="aTank" inputmode="numeric">
@@ -134,17 +135,21 @@ function renderLogin(msg) {
   if (m === 'driver') form = `
       <label for="lCar">رقم السيارة</label><input id="lCar" inputmode="numeric">
       <label for="lCpin">الرمز السري</label><input id="lCpin" type="password" inputmode="numeric">
-      <button class="primary" type="submit">دخول</button>`;
+      <button class="primary" type="submit">دخول</button>${back}`;
   if (m === 'admin') form = `
       <label for="lAdm">كلمة سر الإدارة</label><input id="lAdm" type="password" autocomplete="current-password">
-      <button class="primary" type="submit">دخول</button>`;
+      <button class="primary" type="submit">دخول</button>${back}`;
   app().innerHTML = `
     <div class="login">
       <div class="logo"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#1479b5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.7c3.5 4.2 6 7.6 6 11a6 6 0 0 1-12 0c0-3.4 2.5-6.8 6-11z"/></svg></div>
       <h1>محطة الماء المركزية</h1>
       <p class="hint">خانقين</p>
-      <div class="segs">${tab('customer', 'مشترك')}${tab('driver', 'سيارة')}${tab('admin', 'الإدارة')}</div>
-      <form id="loginForm" class="card form">${form}<p class="err" id="lErr">${esc(msg || '')}</p></form>
+      ${m === 'pick' ? `<div class="roles">
+        <button type="button" class="role r1" data-act="lmode" data-k="customer">أنا مشترك<small>اطلب تعبئة خزانك وتابع طلبك</small></button>
+        <button type="button" class="role r2" data-act="lmode" data-k="driver">السائقين</button>
+        <button type="button" class="role r3" data-act="lmode" data-k="admin">الإدارة</button>
+        ${msg ? `<p class="err">${esc(msg)}</p>` : ''}
+      </div>` : `<form id="loginForm" class="card form"><h2>${titles[m]}</h2>${form}<p class="err" id="lErr">${esc(msg || '')}</p></form>`}
     </div>`;
 }
 async function doLogin(e) {
@@ -189,6 +194,7 @@ function startCustomer() {
     <div id="cAction"></div>
     <section><h2>سجل التعبئة</h2><div id="cHist" class="list"></div></section>`);
   watchSettings(renderCustomer);
+  const tick = setInterval(renderCustomer, 5 * 6e4); S.unsubs.push(() => clearInterval(tick));
   listen(F.doc(db, 'tanks', id), s => { S.tank = s.exists() ? { id: s.id, ...s.data() } : null; renderCustomer(); });
   listen(F.query(F.collection(db, 'orders'), F.where('uid', '==', S.user.uid)), qs => {
     const before = S.myOrders.find(o => o.status !== 'done');
@@ -222,6 +228,8 @@ function renderCustomer() {
         <div>${dot(open.status === 'assigned')}<span>${open.status === 'assigned' ? 'سيارة رقم ' + esc(open.carNo) + ' بالطريق إليك' : 'بانتظار تخصيص سيارة'}</span></div>
         <div>${dot(false)}<span>تمت التعبئة</span></div>
       </div>
+      ${late(open) ? `<div class="latebox"><span>تأخر طلبك أكثر من 24 ساعة؟ تگدر تتصل بالمحطة.</span>
+        <a class="callbtn" href="tel:${esc(stationTel())}">اتصل بالمحطة <span dir="ltr">${esc(stationTel())}</span></a></div>` : ''}
     </section>` : `
     <button type="button" class="request" data-act="openReq" ${t ? '' : 'disabled'}>
       <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.7c3.5 4.2 6 7.6 6 11a6 6 0 0 1-12 0c0-3.4 2.5-6.8 6-11z"/><path d="M9 14h6"/><path d="M12 11v6"/></svg>
@@ -233,6 +241,11 @@ function renderCustomer() {
     : '<p class="muted">ماكو تعبئات مسجلة بعد.</p>';
   $('#cNotes').innerHTML = S.notices.map(n => `
     <div class="notice"><b>${esc(n.title)}</b><span>${esc(n.body)}</span></div>`).join('');
+}
+const stationTel = () => digits(S.settings.phone || '');
+function late(o) {
+  const c = toDate(o.createdAt);
+  return !!(o.status !== 'done' && stationTel() && c && Date.now() - c.getTime() > 24 * 36e5);
 }
 const QUICK = ['الصبح', 'الظهر', 'العصر', 'أي وقت', 'اتصل قبل ما توصل'];
 function openRequestSheet() {
@@ -359,7 +372,9 @@ function drawAdminTab() {
     <section class="card form">
       <label for="sPrice">سعر التعبئة الثابت (دينار)</label><input id="sPrice" inputmode="numeric" value="${esc(S.settings.price || '')}">
       <label for="sSize">حجم الخزان الافتراضي (لتر)</label><input id="sSize" inputmode="numeric" value="${esc(S.settings.tankSize || 500)}">
-      <label class="check"><input type="checkbox" id="sGeo" ${S.settings.geo ? 'checked' : ''}> التحقق من الموقع عند التعبئة (أقل من 100 متر، للخزانات اللي موقعها محفوظ)</label>
+      <label for="sPhone">رقم هاتف المحطة</label><input id="sPhone" inputmode="tel" placeholder="07xxxxxxxxx" value="${esc(S.settings.phone || '')}">
+      <p class="hint">يظهر للمشترك بس إذا طلبه تأخر أكثر من 24 ساعة بدون تعبئة.</p>
+      <label class="check"><input type="checkbox" id="sGeo" ${S.settings.geo ? 'checked' : ''}> التحقق من الموقع عند التعبئة (السائق لازم يكون ضمن 1 كم من الخزان، للخزانات اللي موقعها محفوظ)</label>
       <button type="button" class="primary" data-act="saveSettings">حفظ الإعدادات</button>
     </section>`;
   shell('محطة الماء المركزية', 'لوحة الإدارة', body, adminTabs());
@@ -460,7 +475,7 @@ function initMap() {
   S.map = L.map(el, { zoomControl: true, attributionControl: true }).setView([STATION.lat, STATION.lng], 14);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(S.map);
   L.marker([STATION.lat, STATION.lng], { icon: L.divIcon({ className: 'pin station', html: 'م', iconSize: [28, 28] }) }).addTo(S.map).bindTooltip('المحطة');
-  S.markers = {};
+  S.markers = {}; S.fitted = false;
   setTimeout(() => S.map && S.map.invalidateSize(), 200);
 }
 function renderCars() {
@@ -471,7 +486,7 @@ function renderCars() {
     const seen = toDate(c.seenAt);
     const live = c.onDuty && seen && Date.now() - seen.getTime() < 5 * 6e4;
     return `<div class="carrow">
-      <div class="cinfo"><b>سيارة ${c.n}</b>
+      <div class="cinfo"><b>سيارة ${c.n}</b> <button type="button" class="link small" data-act="flyCar" data-n="${c.n}">على الخريطة</button>
         <span class="muted small">${busy.has(c.n) ? 'بطلب · ' + carLoad(c.n) + ' خزان' : 'متاحة'} · ${live ? '<span class="green">بالدوام</span>' : 'خارج الدوام'}${seen ? ' · آخر موقع ' + ago(c.seenAt) : ''}</span>
         ${gauge(c)}${waterState(c) === 'empty' ? '<span class="pill red">بحاجة إلى إعادة تعبئة</span>' : ''}
         <span class="muted small">تعبئات اليوم: ${S.doneToday.filter(o => o.carNo === c.n).length} · الكاش: ${fmt(cash(c.n))} د.ع · ${perTrip(c)} خزانات بالطلعة</span></div>
@@ -486,7 +501,20 @@ function renderCars() {
       if (S.markers[c.n]) S.markers[c.n].setLatLng([c.lat, c.lng]).setIcon(icon);
       else S.markers[c.n] = L.marker([c.lat, c.lng], { icon }).addTo(S.map).bindTooltip('سيارة ' + c.n);
     }
+    // show the station and every car, however far
+    const pts = S.cars.filter(c => c.lat != null).map(c => [c.lat, c.lng]);
+    if (pts.length && !S.fitted) {
+      S.fitted = true;
+      S.map.fitBounds(L.latLngBounds([[STATION.lat, STATION.lng], ...pts]), { padding: [40, 40], maxZoom: 15 });
+    }
   }
+}
+function flyCar(n) {
+  const c = S.cars.find(x => x.n === n);
+  if (!c || c.lat == null) return toast('سيارة ' + n + ' ما إلها موقع بعد. السائق لازم يدخل للتطبيق ويدوس «بدأت الدوام» ويسمح بالموقع (GPS).', true);
+  if (!S.map) return;
+  S.map.setView([c.lat, c.lng], 15);
+  $('#map').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 async function addCar() {
   const n = Number(digits($('#ncNo').value)), cap = num($('#ncCap').value) || 3500, pin = digits($('#ncPin').value);
@@ -593,7 +621,7 @@ async function addTank() {
 }
 async function saveSettings() {
   try {
-    await F.setDoc(F.doc(db, 'settings', 'main'), { price: num($('#sPrice').value), tankSize: num($('#sSize').value) || 500, geo: $('#sGeo').checked }, { merge: true });
+    await F.setDoc(F.doc(db, 'settings', 'main'), { price: num($('#sPrice').value), tankSize: num($('#sSize').value) || 500, geo: $('#sGeo').checked, phone: digits($('#sPhone').value) }, { merge: true });
     toast('انحفظت الإعدادات.');
   } catch (e) { toast(errText(e), true); }
 }
@@ -643,7 +671,8 @@ function renderDriver() {
       ${o.phone ? `<a class="callbtn" href="tel:0${esc(o.phone)}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>اتصال بالمشترك <span dir="ltr">0${esc(o.phone)}</span></a>` : '<div class="muted small">ماكو رقم موبايل مسجّل لهذا المشترك.</div>'}
       ${has ? `<a class="navbtn" target="_blank" rel="noopener" href="${mapsTo(o.lat, o.lng)}">اذهب للخزان (GPS)</a>`
             : `<div class="warn">أول زيارة: موقع الخزان مو محفوظ. لمن توصل، احفظه.</div><button type="button" class="dashed" data-act="saveLoc" data-id="${o.id}">حفظ موقع الخزان هنا</button>`}
-      ${S.settings.geo && has ? '<div class="muted small">زر التعبئة يشتغل لمن تكون قرب الخزان (أقل من 100 متر).</div>' : ''}
+      ${has ? `<button type="button" class="link small" data-act="saveLoc" data-id="${o.id}" data-upd="1">الخزان انتقل لمكان ثاني؟ حدّث موقعه هنا</button>` : ''}
+      ${S.settings.geo && has ? '<div class="muted small">زر التعبئة يشتغل لمن تكون قرب الخزان (ضمن 1 كم).</div>' : ''}
       <button type="button" class="finish" data-act="finish" data-id="${o.id}">تمت التعبئة<small>واستلمت ${priceTxt()} كاش</small></button>
     </div>`;
   }).join('') : '<p class="muted card">ماكو طلبات لهذي السيارة هسه. لمن الإدارة تخصصلك طلب يوصلك تنبيه.</p>';
@@ -696,6 +725,7 @@ async function stopDuty() {
 }
 async function saveLoc(id, btn) {
   const o = S.route.find(x => x.id === id); if (!o) return;
+  const label = btn.textContent;
   btn.disabled = true; btn.textContent = 'جاري تحديد الموقع…';
   try {
     const p = await getPos();
@@ -704,8 +734,8 @@ async function saveLoc(id, btn) {
     b.update(F.doc(db, 'tanks', o.tankId), { lat: p.lat, lng: p.lng });
     b.update(F.doc(db, 'orders', id), { lat: p.lat, lng: p.lng });
     await b.commit();
-    toast('انحفظ موقع خزان ' + o.tankId + '. المرة الجاية يطلعلك الطريق مباشرة.');
-  } catch (e) { toast(errText(e), true); btn.disabled = false; btn.textContent = 'حفظ موقع الخزان هنا'; }
+    toast((btn.dataset.upd ? 'تحدّث موقع خزان ' : 'انحفظ موقع خزان ') + o.tankId + '. المرة الجاية يطلعلك الطريق مباشرة.');
+  } catch (e) { toast(errText(e), true); btn.disabled = false; btn.textContent = label; }
 }
 async function finish(id, btn) {
   const o = S.route.find(x => x.id === id); if (!o) return;
@@ -714,7 +744,7 @@ async function finish(id, btn) {
     if (S.settings.geo && o.lat != null) {
       const p = await getPos();
       const d = dist(p, { lat: o.lat, lng: o.lng });
-      if (d > 100 + Math.min(p.acc || 0, 60)) { btn.disabled = false; return toast('أنت بعيد عن الخزان (' + Math.round(d) + ' متر). لازم تكون قربه حتى تسجّل التعبئة.', true); }
+      if (d > 1000 + Math.min(p.acc || 0, 100)) { btn.disabled = false; return toast('أنت بعيد عن الخزان (' + (d >= 1000 ? (d / 1000).toFixed(1) + ' كم' : Math.round(d) + ' متر') + '). إذا الخزان انتقل لمكان جديد، دوس «حدّث موقعه هنا» وبعدها سجّل التعبئة.', true); }
     }
     const b = F.writeBatch(db);
     b.update(F.doc(db, 'orders', id), { status: 'done', doneAt: F.serverTimestamp(), doneDay: dayKey(), paid: num(S.settings.price) });
@@ -766,5 +796,6 @@ document.addEventListener('click', async e => {
   else if (a === 'refill') refillCar(b);
   else if (a === 'duty') { S.watchId != null ? stopDuty() : startDuty(); }
   else if (a === 'saveLoc') saveLoc(id, b);
+  else if (a === 'flyCar') flyCar(Number(b.dataset.n));
   else if (a === 'finish') finish(id, b);
 });
